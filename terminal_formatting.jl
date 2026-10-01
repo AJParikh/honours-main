@@ -1,6 +1,6 @@
 module tf
 
-const TOTAL_WIDTH = 87
+const TOTAL_WIDTH = 75
 
 function TerminalNewRun(text)
     text_width = length(text)
