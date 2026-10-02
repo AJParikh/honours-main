@@ -35,8 +35,8 @@ function main()
         6378137.0,
     )
 
-    total_time = 1.0e4
-    propagation_step = 0.5e3
+    total_time = 2.5e4
+    propagation_step = 0.25e3
     M = Int(total_time / propagation_step)
     propagation = integrators.Propagator(10.0, propagation_step)
     u0 = SVector(7.0e6, 0.0, 0.0, 0.0, 7.5e3, 1.0e3)
@@ -57,6 +57,8 @@ function main()
     end_M_μ[:, 1] = u0_N_μ
     end_M_Σ = Array{Float64, 3}(undef, 6, 6, M)
     end_M_Σ[:, :, 1] = u0_N_Σ
+    end_M_ρ = Vector{Float64}(undef, M)
+    end_M_ρ[1] = u0_N_Σ[1,3]/(sqrt(u0_N_Σ[1,1]) * sqrt(u0_N_Σ[3,3]))
 
     u0_N_plot = copy(u0_N)
     u0_N_plot[1:3, :] .-= u0_N_plot[1:3, 1]
@@ -73,8 +75,23 @@ function main()
         end
         end_M_μ[:, i] = vec(mean(end_states, dims=2))
         end_M_Σ[:, :, i] = cov(end_states, dims=2)
+
         ref_pos = SVector{3, Float64}(end_states[1:3, 1])
         ref_vel = SVector{3, Float64}(end_states[4:6, 1])
+
+        # tf.TerminalHeading2("$i timestep position XYZ-covariance")
+        # display(end_M_Σ[1:3, 1:3, i])
+        # println()
+
+        tf.TerminalHeading2("$i timestep position VNB-covariance")
+        R = post_utils.Cart_to_VNB(ref_pos, ref_vel)
+        cov_VNB = R * end_M_Σ[1:3, 1:3, i] * R'
+        display(cov_VNB)
+        println()
+        ρ = cov_VNB[1,3]/(sqrt(cov_VNB[1,1]) * sqrt(cov_VNB[3,3]))
+        end_M_ρ[i] = ρ
+        println("V-B Correlation coefficient: ", ρ)
+        println()
 
         v_hat = ref_vel / norm(ref_vel)
         n_hat = cross(ref_pos, ref_vel) / norm(cross(ref_pos, ref_vel))
@@ -149,7 +166,21 @@ function main()
         savefig(plt, joinpath(plots_dir, "cloud_snapshot_$(i*propagation_step).html"))
     end
 
-    println("Propagation complete.")
+    plt = plot(
+        1:M,
+        end_M_ρ,
+        xlabel = "Step index",
+        ylabel = "end_M_ρ",
+        title  = "end_M_ρ vs step",
+        label  = "end_M_ρ",
+        linewidth = 2,
+        marker = :circle,
+        markersize = 3,
+    )
+
+    savefig(plt, joinpath(plots_dir, "end_M_rho_progression.png"))
+
+    tf.TerminalHeading1("Propagation complete.")
 end
 
 main()
