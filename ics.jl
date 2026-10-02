@@ -39,16 +39,16 @@ function generate_initial_conditions(u0::SVector{6, Float64}, N::Int; pn::Bool=f
     rng = MersenneTwister(42)
     noisy_initial_conditions = repeat(reshape(collect(u0), 6, 1), 1, N)
     if pn
-        noisy_initial_conditions[1:3, :] .+= rand(rng, pnd, N)
+        noisy_initial_conditions[1:3, 2:N] .+= rand(rng, pnd, N - 1)
     end
     if vn
-        noisy_initial_conditions[4:6, :] .+= rand(rng, vnd, N)
+        noisy_initial_conditions[4:6, 2:N] .+= rand(rng, vnd, N - 1)
     end
 
-    initial_position_mean = vec(mean(noisy_initial_conditions[1:3, :], dims=2))
-    initial_position_covariance = cov(noisy_initial_conditions[1:3, :], dims=2)
+    initial_mean = vec(mean(noisy_initial_conditions, dims=2))
+    initial_covariance = cov(noisy_initial_conditions, dims=2)
 
-    return noisy_initial_conditions, initial_position_mean, initial_position_covariance
+    return noisy_initial_conditions, initial_mean, initial_covariance
 end
 
 end # module ics
