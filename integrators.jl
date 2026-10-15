@@ -13,8 +13,6 @@ using ..accelerations
 # ----- Initialisation -----
 # --------------------------
 
-SpaceIndices.init()
-
 struct Propagator
     dt::Float64
     tend::Float64
@@ -155,6 +153,18 @@ function Yoshida(u0::SVector{6,Float64}, prop_model::Propagator, grav_model, ::V
 
     t = range(0.0, step=dt, length=n+1)
     return t, pos, vel
+end
+
+@inline function Yoshida_final(u0::SVector{6,Float64}, prop_model::Propagator, grav_model, ::Val{N}=Val(1)) where {N}
+
+    dt = prop_model.dt
+    n  = Int(round(prop_model.tend / dt))
+    u  = u0
+    @inbounds for _ in 1:n
+        u = recursive_yoshida_step(u, grav_model, dt, Val(N))
+    end
+    return u
+
 end
 
 # ----------------------------------------

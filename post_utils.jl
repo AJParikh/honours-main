@@ -70,4 +70,13 @@ Cart_to_RTN(u0::SVector{6, Float64}) = Cart_to_RTN(SVector{3, Float64}(u0[1:3]),
     return SVector{6,Float64}(a, e, Ω, i, ω, θ)
 end
 
+@inline function ψ_BR(r::SVector{3,Float64}, v::SVector{3,Float64})
+    h = cross(r, v)
+    n_hat = h / norm(h)
+    r_hat = r / norm(r)
+    v_hat = v / norm(v)
+    b_hat = cross(v_hat, n_hat)
+    return atan(dot(cross(b_hat, r_hat), n_hat), dot(b_hat, r_hat))
+end
+
 end # module post_utils

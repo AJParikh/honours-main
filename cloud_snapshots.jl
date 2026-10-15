@@ -3,6 +3,7 @@ using SatelliteToolbox, SatelliteToolboxAtmosphericModels, SatelliteToolboxBase
 using Random, Distributions, Statistics
 using Plots
 using DelimitedFiles
+using ProgressMeter
 
 include("terminal_formatting.jl")
 using .tf
@@ -22,8 +23,9 @@ using .post_utils
 function main()
 
     plots_save::Bool = false
+    plot_ψ::Bool = false
 
-    tf.TerminalNewRun("(cloud-snapshots.jl)")
+    tf.TerminalNewRun("(cloud_snapshots.jl)")
 
     plots_dir = "./outputs/plots"
     data_dir = "./outputs/data"
@@ -40,14 +42,29 @@ function main()
         6378137.0,
     )
 
-    total_time = 10.0e4
-    propagation_step = 0.125e3
-    M = Int(total_time / propagation_step)
-    propagation = integrators.Propagator(10.0, propagation_step)
+    total_time = 10.0e6
+    propagation_step = 0.5e3
+    Δt = 10.0
+
+    propagation_step % Δt == 0.0 || error("Propagation step must be an integer multiple of Δt.")
+
+    total_time > propagation_step || error("Total time must be greater than propagation step.")
+
+    total_time % propagation_step == 0.0 || error("Total time must be an integer multiple of propagation step.")
+
+    M = Int(round(total_time / propagation_step))
+    update_i = Int(round(M / 20))
+    propagation = integrators.Propagator(Δt, propagation_step)
     u0 = SVector{6, Float64}(7.0e6, 0.0, 0.0, 0.0, 7.5e3, 1.0e3)
+
+    a = post_utils.Cart_to_Kep(u0, model.μ)[1]
+    T = 2π * sqrt(a*a*a / model.μ)
+    orbits = Int(round(total_time / T))
 
     println("Δt: ", propagation.dt, " s")
     println("Step propagation time: ", propagation.tend, " s")
+    println("Total propagation time: ", total_time, " s")
+    println("Orbits to be simulated: ", orbits)
     println()
 
     tf.TerminalHeading1("Covariance Propagation")
@@ -73,6 +90,11 @@ function main()
     end_M_ρ_RT = Vector{Float64}(undef, M + 1)
     end_M_ρ_RT[1] = u0_N_Σ_RTN[1,3]/(sqrt(u0_N_Σ_RTN[1,1]) * sqrt(u0_N_Σ_RTN[3,3]))
 
+    if plot_ψ
+        end_M_ψ_BR = Vector{Float64}(undef, M + 1)
+        end_M_ψ_BR[1] = post_utils.ψ_BR(SVector{3, Float64}(u0[1:3]...), SVector{3, Float64}(u0[4:6]...))
+    end
+
     u0_N_plot = copy(u0_N)
     u0_N_plot[1:3, :] .-= u0_N_plot[1:3, 1]
 
@@ -81,11 +103,15 @@ function main()
     println("Beginning propagation of ensemble...")
     println()
 
+    prog = Progress(M, dt=2.0)
     for i in 1:M
-        for j in 1:N
+        Threads.@threads for j in 1:N
             ic = SVector{6, Float64}(end_states[:, j])
-            _, pos, vel = integrators.Yoshida(ic, propagation, model, Val(2))
-            end_states[:, j] = vcat(pos[:, end], vel[:, end])
+            u = integrators.Yoshida_final(ic, propagation, model, Val(2))
+            @inbounds begin
+                end_states[1,j] = u[1]; end_states[2,j] = u[2]; end_states[3,j] = u[3]
+                end_states[4,j] = u[4]; end_states[5,j] = u[5]; end_states[6,j] = u[6]
+            end
         end
         end_M_μ[:, i + 1] = vec(mean(end_states, dims=2))
         end_M_Σ[:, :, i + 1] = cov(end_states, dims=2)
@@ -120,6 +146,14 @@ function main()
         end_M_ρ_RT[i + 1] = ρ_RT
         # println("R-T Correlation coefficient: ", ρ_RT)
         # println()
+
+        if plot_ψ
+            # tf.TerminalHeading2("$i timestep ψ_BR")
+
+            end_M_ψ_BR[i + 1] = post_utils.ψ_BR(ref_pos, ref_vel)
+            # println("ψ_BR: ", end_M_ψ_BR[i + 1])
+            # println()
+        end
 
         if plots_save
             v_hat = ref_vel / norm(ref_vel)
@@ -194,64 +228,84 @@ function main()
             )
             savefig(plt, joinpath(plots_dir, "cloud_snapshot_$(i*propagation_step).html"))
         end
+        next!(prog)
     end
+    println()
 
     tf.TerminalHeading1("Propagation complete.")
 
     gr()
 
     time_axis = (0:M) .* propagation_step
-    a = post_utils.Cart_to_Kep(u0, model.μ)[1]
-    T = 2π * sqrt(a*a*a / model.μ)
+    k = 1.0/50.0 # pi axis scaling
 
     plt = plot(
         time_axis,
-        end_M_ρ_VB,
+        end_M_ρ_RT,
         xlabel = "Time [s]",
         ylabel = "end_M_ρ",
         title  = "end_M_ρ vs Time",
-        label  = "end_M_ρ_VB",
+        label  = "end_M_ρ_RT",
         size = (1200, 400),
         dpi = 600,
         linewidth = 2,
         marker = :circle,
         markersize = 3,
         left_margin   = 8Plots.mm,
-        right_margin  = 4Plots.mm,
+        right_margin  = 8Plots.mm,
         top_margin    = 4Plots.mm,
         bottom_margin = 8Plots.mm,
+        legend = :topleft,
     )
     plot!(
         plt,
         time_axis,
-        end_M_ρ_RT,
-        label = "end_M_ρ_RT",
+        end_M_ρ_VB,
+        label = "end_M_ρ_VB",
         linewidth = 2,
         marker = :circle,
         markersize = 3,
     )
     vline!(
         plt,
-        collect(0.0:T:total_time),
+        collect(0.0:10*T:total_time),
         color = :green,
         linestyle = :dash,
         linewidth = 1,
         alpha = 0.5,
         label = "",
     )
+    if plot_ψ
+        plt_twin = twinx(plt)
+        plot!(
+            plt_twin,
+            time_axis,
+            end_M_ψ_BR,
+            ylabel = "ψ_BR",
+            label = "ψ_BR",
+            color = :green,
+            linewidth = 2,
+            marker = :diamond,
+            markersize = 3,
+            legend = :topright,
+            ylimits = (-k*π, k*π)
+        )
+    end
 
     savefig(plt, joinpath(plots_dir, "end_M_rho_progression.png"))
 
     tf.TerminalHeading1("ρ evolution plot done")
 
-    data = hcat(time_axis, end_M_ρ_VB, end_M_ρ_RT)
+    data = plot_ψ ? hcat(time_axis, end_M_ρ_VB, end_M_ρ_RT, end_M_ψ_BR) : hcat(time_axis, end_M_ρ_VB, end_M_ρ_RT)
 
     open(joinpath(data_dir, "rho_progression.csv"), "w") do io
-        println(io, "time_s,rho_VB,rho_RT")
+        println(io, plot_ψ ? "time_s,rho_VB,rho_RT,psi_BR" : "time_s,rho_VB,rho_RT")
         writedlm(io, data, ',')
     end
 
     tf.TerminalHeading1("ρ evolution data saved")
 end
+
+using Profile
 
 main()
