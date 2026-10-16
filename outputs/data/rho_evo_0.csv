@@ -1,5 +1,47 @@
+# format_version = 1
+# units = "SI (m, s, kg); angles in radians"
+#
+# [gravity_model]
+# type = "PerturbedGravModel"
+#
+#     [gravity_model.parameters]
+#     c2 = 6.6062905679126045e10
+#     "μ" = 3.986004418e14
+#     c3 = -1.642849677552508e15
+#     c4 = -1.6752088115029234e21
+#
+# [propagation]
+# base_step = "DKD"
+# integrator = "Yoshida"
+# generation = 2
+# order = 4
+# dt_s = 10.0
+# snapshot_interval_s = 500.0
+# total_time_s = 1.0e7
+# nominal_period_s = 5875.984194131054
+# snapshot_step_s = 500000.0
+#
+# [diagnostics]
+# rho_VB = "position correlation V-B in VNB"
+# psi_BR_saved = false
+# rho_RT = "position correlation R-T in RTN"
+#
+# [initial_conditions]
+# sample_covariance_rows = [[501.27066207525235, 6.492472263711522, 4.552960403135097, 0.0, 0.0, 0.0], [6.492472263711522, 510.43048667579893, -0.9973485250417854, 0.0, 0.0, 0.0], [4.552960403135097, -0.9973485250417854, 496.9148370724883, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+# sample_mean = [6.999999898121951e6, -0.19163794158482927, -0.3202456548859101, 0.0, 7500.0, 1000.0]
+# position_variance_m2 = 500.0
+# ensemble_size = 10000
+# distribution = "independent isotropic Gaussian position and velocity noise"
+# velocity_noise = false
+# rng = "MersenneTwister"
+# position_noise = true
+# state_xyz_vxyz = [7.0e6, 0.0, 0.0, 0.0, 7500.0, 1000.0]
+# velocity_variance_m2_s2 = 500.0
+# first_particle_is_reference = true
+# source = "normal_ics"
+# seed = 42
 time_s,rho_VB,rho_RT
-0.0,0.013919082158623235,0.00731959943341339
+0.0,0.013919082158623235,0.013919082158623235
 500.0,-0.2504345219629936,-0.25164845041343076
 1000.0,-0.8837895653221104,-0.8840859962126542
 1500.0,-0.9961012896021043,-0.996082818637972

@@ -4,6 +4,7 @@ using Random, Distributions, Statistics
 using Plots
 using DelimitedFiles
 using ProgressMeter
+using TOML
 
 include("terminal_formatting.jl")
 using .tf
@@ -20,17 +21,21 @@ using .ics
 include("post_utils.jl")
 using .post_utils
 
+include(joinpath(@__DIR__, "rho_io.jl"))
+using .rho_io
+
 function main()
 
-    plots_save::Bool = false
+    plots_save::Bool = true
     plot_ψ::Bool = false
 
     tf.TerminalNewRun("(cloud_snapshots.jl)")
 
-    plots_dir = "./outputs/plots"
-    data_dir = "./outputs/data"
+    plots_dir = joinpath(@__DIR__, "outputs", "plots")
+    data_dir = joinpath(@__DIR__, "outputs", "data")
     mkpath(plots_dir)
     mkpath(data_dir)
+    run_index = rho_io.next_index(data_dir)
 
     tf.TerminalHeading1("Propagator Settings")
 
@@ -44,13 +49,25 @@ function main()
 
     total_time = 10.0e6
     propagation_step = 0.5e3
+    snapshot_step = 5.0e5
     Δt = 10.0
+    position_noise = true
+    velocity_noise = false
+    random_seed = 42
+    position_variance = 500.0 # m² per Cartesian axis
+    velocity_variance = 500.0 # (m/s)² per Cartesian axis
 
     propagation_step % Δt == 0.0 || error("Propagation step must be an integer multiple of Δt.")
 
     total_time > propagation_step || error("Total time must be greater than propagation step.")
 
     total_time % propagation_step == 0.0 || error("Total time must be an integer multiple of propagation step.")
+
+    if plots_save
+        isfinite(snapshot_step) && snapshot_step > 0 || error("Snapshot step must be positive and finite.")
+        snapshot_step % propagation_step == 0.0 || error("Snapshot step must be an integer multiple of propagation_step.")
+    end
+    snapshot_stride = plots_save ? Int(round(snapshot_step / propagation_step)) : 1
 
     M = Int(round(total_time / propagation_step))
     update_i = Int(round(M / 20))
@@ -72,7 +89,36 @@ function main()
     N = 10000
     println("Ensemble size: ", N)
 
-    u0_N, u0_N_μ, u0_N_Σ = ics.generate_initial_conditions(u0, N; pn=true, vn=false)
+    u0_N, u0_N_μ, u0_N_Σ = ics.generate_initial_conditions(u0, N;
+        pn=position_noise, vn=velocity_noise, seed=random_seed,
+        position_variance=position_variance, velocity_variance=velocity_variance)
+
+    # Store TOML as CSV comments so the output carries its own simulation context.
+    metadata = Dict(
+        "format_version" => 1,
+        "units" => "SI (m, s, kg); angles in radians",
+        "gravity_model" => Dict(
+            "type" => string(nameof(typeof(model))),
+            "parameters" => Dict(string(name) => getfield(model, name) for name in fieldnames(typeof(model)))),
+        "propagation" => Dict(
+            "integrator" => "Yoshida", "base_step" => "DKD",
+            "generation" => 2, "order" => 4, # Matches Val(2) in the propagation loop.
+            "dt_s" => Δt, "snapshot_interval_s" => propagation_step,
+            "total_time_s" => total_time, "nominal_period_s" => T, "snapshot_step_s" => snapshot_step),
+        "initial_conditions" => Dict(
+            "source" => "normal_ics",
+            "state_xyz_vxyz" => collect(u0), "ensemble_size" => N,
+            "distribution" => "independent isotropic Gaussian position and velocity noise",
+            "position_noise" => position_noise, "velocity_noise" => velocity_noise,
+            "position_variance_m2" => position_variance,
+            "velocity_variance_m2_s2" => velocity_variance,
+            "rng" => "MersenneTwister", "seed" => random_seed,
+            "first_particle_is_reference" => true,
+            "sample_mean" => collect(u0_N_μ),
+            "sample_covariance_rows" => [collect(row) for row in eachrow(u0_N_Σ)]),
+        "diagnostics" => Dict("psi_BR_saved" => plot_ψ,
+            "rho_VB" => "position correlation V-B in VNB",
+            "rho_RT" => "position correlation R-T in RTN"))
 
     end_states = copy(u0_N)
     end_M_μ = Matrix{Float64}(undef, 6, M + 1)
@@ -88,7 +134,7 @@ function main()
     R_RTN = post_utils.Cart_to_RTN(u0)
     u0_N_Σ_RTN = R_RTN * u0_N_Σ[1:3, 1:3] * R_RTN'
     end_M_ρ_RT = Vector{Float64}(undef, M + 1)
-    end_M_ρ_RT[1] = u0_N_Σ_RTN[1,3]/(sqrt(u0_N_Σ_RTN[1,1]) * sqrt(u0_N_Σ_RTN[3,3]))
+    end_M_ρ_RT[1] = u0_N_Σ_RTN[1,2]/(sqrt(u0_N_Σ_RTN[1,1]) * sqrt(u0_N_Σ_RTN[2,2]))
 
     if plot_ψ
         end_M_ψ_BR = Vector{Float64}(undef, M + 1)
@@ -155,7 +201,7 @@ function main()
             # println()
         end
 
-        if plots_save
+        if plots_save && i % snapshot_stride == 0
             v_hat = ref_vel / norm(ref_vel)
             n_hat = cross(ref_pos, ref_vel) / norm(cross(ref_pos, ref_vel))
             b_hat = cross(v_hat, n_hat)
@@ -226,7 +272,7 @@ function main()
                 linewidth=4,
                 label="Binormal direction",
             )
-            savefig(plt, joinpath(plots_dir, "cloud_snapshot_$(i*propagation_step).html"))
+            savefig(plt, joinpath(plots_dir, "snapshot_$(run_index)_$(i*propagation_step).html"))
         end
         next!(prog)
     end
@@ -234,78 +280,17 @@ function main()
 
     tf.TerminalHeading1("Propagation complete.")
 
-    gr()
-
     time_axis = (0:M) .* propagation_step
-    k = 1.0/50.0 # pi axis scaling
-
-    plt = plot(
-        time_axis,
-        end_M_ρ_RT,
-        xlabel = "Time [s]",
-        ylabel = "end_M_ρ",
-        title  = "end_M_ρ vs Time",
-        label  = "end_M_ρ_RT",
-        size = (1200, 400),
-        dpi = 600,
-        linewidth = 2,
-        marker = :circle,
-        markersize = 3,
-        left_margin   = 8Plots.mm,
-        right_margin  = 8Plots.mm,
-        top_margin    = 4Plots.mm,
-        bottom_margin = 8Plots.mm,
-        legend = :topleft,
-    )
-    plot!(
-        plt,
-        time_axis,
-        end_M_ρ_VB,
-        label = "end_M_ρ_VB",
-        linewidth = 2,
-        marker = :circle,
-        markersize = 3,
-    )
-    vline!(
-        plt,
-        collect(0.0:10*T:total_time),
-        color = :green,
-        linestyle = :dash,
-        linewidth = 1,
-        alpha = 0.5,
-        label = "",
-    )
-    if plot_ψ
-        plt_twin = twinx(plt)
-        plot!(
-            plt_twin,
-            time_axis,
-            end_M_ψ_BR,
-            ylabel = "ψ_BR",
-            label = "ψ_BR",
-            color = :green,
-            linewidth = 2,
-            marker = :diamond,
-            markersize = 3,
-            legend = :topright,
-            ylimits = (-k*π, k*π)
-        )
-    end
-
-    savefig(plt, joinpath(plots_dir, "end_M_rho_progression.png"))
-
-    tf.TerminalHeading1("ρ evolution plot done")
-
     data = plot_ψ ? hcat(time_axis, end_M_ρ_VB, end_M_ρ_RT, end_M_ψ_BR) : hcat(time_axis, end_M_ρ_VB, end_M_ρ_RT)
 
-    open(joinpath(data_dir, "rho_progression.csv"), "w") do io
-        println(io, plot_ψ ? "time_s,rho_VB,rho_RT,psi_BR" : "time_s,rho_VB,rho_RT")
-        writedlm(io, data, ',')
-    end
+    csv_path = rho_io.save_evolution(data_dir, metadata, data, plot_ψ; index=run_index)
 
     tf.TerminalHeading1("ρ evolution data saved")
+    println(csv_path)
 end
 
 using Profile
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
